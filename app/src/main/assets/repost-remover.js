@@ -196,9 +196,12 @@
     }
     var ok = await verify(sec);
     if (!ok) { S.status = 'delete_stopped'; S.msg = 'หยุดระหว่างตรวจสอบ'; save(); render(); return; }
-    var c = counts();
+    var removedN = counts().removed;
+    S.items = S.items.filter(function (i) { return i.status !== 'removed'; }); // รีเซ็ตรายการ: เหลือเฉพาะที่ลบไม่สำเร็จ
     S.status = 'completed';
-    S.msg = c.remaining === 0 ? 'ลบเสร็จและตรวจสอบแล้ว ✅' : 'ลบเสร็จ แต่ยังเหลือ ' + c.remaining + ' รายการ';
+    S.msg = S.items.length === 0
+      ? 'ลบเสร็จและตรวจสอบแล้ว ✅ ลบไป ' + removedN + ' รายการ — รีเซ็ตรายการแล้ว'
+      : 'ลบแล้ว ' + removedN + ' รายการ · เหลือ ' + S.items.length + ' รายการที่ยังลบไม่สำเร็จ (กด "ลบที่เลือก" เพื่อลองใหม่)';
     save(); render();
   }
 
@@ -231,7 +234,7 @@
     '.stats strong{display:block;font-size:17px}.stats span{font-size:10px;color:#aaa}' +
     '.row{display:flex;flex-wrap:wrap;gap:8px;padding:0 14px 10px}' +
     '.row button{flex:1 1 40%;padding:11px 8px;border-radius:9px;border:0;background:#2d2d2d;color:#fff;font-size:14px}' +
-    '.row button.danger{background:#fe2c55;flex-basis:100%;font-weight:600}' +
+    '.row button.danger{background:#fe2c55;font-weight:600}' +
     '.row button:disabled{opacity:.4}' +
     '#list{flex:1;overflow:auto;border-top:1px solid #2a2a2a}' +
     '.it{display:flex;gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid #1f1f1f;font-size:13px}' +
@@ -248,10 +251,8 @@
     '<div><strong id="c-removed">0</strong><span>ลบแล้ว</span></div><div><strong id="c-failed">0</strong><span>ล้มเหลว</span></div>' +
     '<div><strong id="c-remaining">0</strong><span>คงเหลือ</span></div></div>' +
     '<div class="row">' +
-    '<button id="b-all" class="danger">ลบรีโพสต์ทั้งหมด (สแกน+ลบทันที)</button>' +
-    '<button id="b-scan">สแกนรีโพสต์</button><button id="b-del">ลบที่เลือก</button>' +
-    '<button id="b-selall">เลือกทั้งหมด</button><button id="b-selnone">ไม่เลือกเลย</button>' +
-    '<button id="b-stop" style="flex-basis:100%">หยุด</button></div>' +
+    '<button id="b-scan">สแกนรีโพสต์</button><button id="b-del" class="danger">ลบที่เลือก</button>' +
+    '<button id="b-selall">เลือกทั้งหมด</button><button id="b-selnone">ไม่เลือกเลย</button></div>' +
     '<div id="list"></div>' +
     '<div class="note">การลบย้อนกลับไม่ได้ · ใช้กับบัญชีตัวเองเท่านั้น · ใช้ endpoint ไม่เป็นทางการของ TikTok อาจถูกจำกัดบัญชีได้ แม้มีการหน่วงเวลาแล้ว · ไม่เกี่ยวข้องกับ TikTok</div></section>';
   var $ = function (id) { return root.getElementById(id); };
@@ -262,12 +263,11 @@
     ['collected', 'selected', 'removed', 'failed', 'remaining'].forEach(function (k) { $('c-' + k).textContent = c[k]; });
     $('status').textContent = S.msg;
     $('err').hidden = !S.err; $('err').textContent = S.err;
-    $('b-all').disabled = busy;
     $('b-scan').disabled = busy;
     $('b-selall').disabled = busy;
     $('b-selnone').disabled = busy;
-    $('b-del').disabled = busy || c.collected === 0;
-    $('b-stop').disabled = !busy;
+    $('b-del').textContent = busy ? 'หยุด' : 'ลบที่เลือก'; // ระหว่างสแกน/ลบ ปุ่มนี้กลายเป็นปุ่มหยุด
+    $('b-del').disabled = !busy && c.collected === 0;
     if (listTimer) return; // วาดรายการไม่เกิน ~2 ครั้ง/วินาที กันมือถือหน่วงระหว่างลบ
     listTimer = setTimeout(function () { listTimer = 0; drawList(); }, 250);
   }
@@ -296,7 +296,10 @@
     var frag = document.createDocumentFragment();
     rowMap = {};
     var visible = S.items.filter(function (i) { return i.status !== 'removed'; });
-    if (!visible.length && S.items.length) {
+    if (!S.items.length) {
+      var none = document.createElement('div'); none.className = 'note'; none.textContent = 'ยังไม่มีรายการ — กด "สแกนรีโพสต์"';
+      frag.appendChild(none);
+    } else if (!visible.length) {
       var empty = document.createElement('div'); empty.className = 'note'; empty.textContent = 'ลบครบทุกรายการแล้ว ✅';
       frag.appendChild(empty);
     }
@@ -332,15 +335,8 @@
     if (S.items.length && !confirm('สแกนใหม่และแทนที่รายการเดิม?')) return;
     run(scan);
   };
-  $('b-all').onclick = function () {
-    if (!confirm('ลบรีโพสต์ทั้งหมดในบัญชีนี้?\nการลบย้อนกลับไม่ได้')) return;
-    run(async function () {
-      if (await scan()) {
-        if (S.items.length) await deleteSelected(); else S.msg = 'ไม่พบรีโพสต์ในบัญชีนี้';
-      }
-    });
-  };
   $('b-del').onclick = function () {
+    if (busy) { stopFlag = true; S.msg = 'กำลังหยุด…'; render(); return; }
     var n = counts().remaining;
     if (!n) { S.err = 'ยังไม่ได้เลือกรีโพสต์ที่ต้องลบ'; render(); return; }
     if (!confirm('ลบรีโพสต์ที่เลือก ' + n + ' รายการ?\nการลบย้อนกลับไม่ได้')) return;
@@ -348,7 +344,6 @@
   };
   $('b-selall').onclick = function () { S.items.forEach(function (i) { if (i.status !== 'removed') i.selected = true; }); save(); render(); };
   $('b-selnone').onclick = function () { S.items.forEach(function (i) { i.selected = false; }); save(); render(); };
-  $('b-stop').onclick = function () { stopFlag = true; S.msg = 'กำลังหยุด…'; render(); };
 
   load();
   document.documentElement.appendChild(host);
