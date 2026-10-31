@@ -33,7 +33,7 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private String script = "";
-    private boolean desktopMode = false;
+    private boolean desktopMode = true; // เปิดโหมดคอมเป็นค่าเริ่มต้น
     private Button modeButton;
 
     @Override
@@ -54,7 +54,7 @@ public class MainActivity extends Activity {
 
         Button back = makeButton("◀", 1f);
         Button reload = makeButton("↻ รีเฟรช", 2f);
-        modeButton = makeButton("โหมดคอม: ปิด", 3f);
+        modeButton = makeButton("โหมดคอม: เปิด", 3f);
         Button tools = makeButton("🧰 ลบรีโพสต์", 3f);
         bar.addView(back);
         bar.addView(reload);
