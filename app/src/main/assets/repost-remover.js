@@ -174,14 +174,14 @@
     while (!stopFlag) {
       var it = S.items.find(function (i) { return i.selected && i.status === 'pending'; });
       if (!it) break;
-      it.status = 'removing';
+      it.status = 'removing'; setRowLabel(it);
       var done = counts();
       S.msg = 'กำลังลบ ' + (done.removed + done.failed + 1) + ' / ' + (done.removed + done.failed + done.remaining);
       render();
-      try { await removeOne(it.id); it.status = 'removed'; it.error = ''; }
+      try { await removeOne(it.id); it.status = 'removed'; it.error = ''; hideRow(it.id); }
       catch (e) {
         if (e instanceof SafetyStop) { it.status = 'pending'; throw e; }
-        it.status = 'failed'; it.error = (e && e.message) || String(e);
+        it.status = 'failed'; it.error = (e && e.message) || String(e); setRowLabel(it);
       }
       save(); render();
       streak++;
@@ -269,16 +269,38 @@
     $('b-del').disabled = busy || c.collected === 0;
     $('b-stop').disabled = !busy;
     if (listTimer) return; // วาดรายการไม่เกิน ~2 ครั้ง/วินาที กันมือถือหน่วงระหว่างลบ
-    listTimer = setTimeout(function () { listTimer = 0; drawList(); }, 500);
+    listTimer = setTimeout(function () { listTimer = 0; drawList(); }, 250);
   }
-  var listTimer = 0;
+  var listTimer = 0, rowMap = {};
+  function labelOf(i) {
+    var label = { pending: 'รอลบ', removing: 'กำลังลบ…', removed: 'ลบแล้ว', failed: 'ล้มเหลว: ' + i.error, remaining: i.error };
+    return label[i.status] || i.status;
+  }
+  function statusCls(i) { return i.status === 'removed' ? ' ok' : (i.status === 'failed' || i.status === 'remaining') ? ' bad' : ''; }
+  function hideRow(id) { // รายการที่ลบสำเร็จหายไปจากหน้าจอทันที
+    var r = rowMap[id];
+    if (r && r.row.parentNode) r.row.parentNode.removeChild(r.row);
+    delete rowMap[id];
+  }
+  function setRowLabel(i) { // อัปเดตข้อความสถานะของแถวเดียว ไม่ต้องวาดทั้งรายการใหม่
+    var r = rowMap[i.id];
+    if (r) { r.s.textContent = labelOf(i); r.s.className = 's' + statusCls(i); }
+  }
   function drawList() {
-    var key = busy + ':' + S.items.length + ':' + S.items.map(function (i) { return (i.selected ? 1 : 0) + i.status[0]; }).join('');
+    // ระหว่างลบ อัปเดตทีละแถวโดยตรง (hideRow/setRowLabel) จึงไม่ต้องวาดทั้งรายการใหม่ → ลื่นและเห็นผลทันที
+    var key = (busy && S.status === 'deleting') ? 'del:' + S.items.length
+      : busy + ':' + S.items.length + ':' + S.items.map(function (i) { return (i.selected ? 1 : 0) + i.status[0]; }).join('');
     if (key === lastListKey) return;
     lastListKey = key;
-    var list = $('list'); list.textContent = '';
+    var list = $('list'), keepTop = list.scrollTop; list.textContent = '';
     var frag = document.createDocumentFragment();
-    S.items.slice(0, 400).forEach(function (i) { // แสดงสูงสุด 400 รายการเพื่อไม่ให้มือถือหน่วง
+    rowMap = {};
+    var visible = S.items.filter(function (i) { return i.status !== 'removed'; });
+    if (!visible.length && S.items.length) {
+      var empty = document.createElement('div'); empty.className = 'note'; empty.textContent = 'ลบครบทุกรายการแล้ว ✅';
+      frag.appendChild(empty);
+    }
+    visible.slice(0, 400).forEach(function (i) { // แสดงสูงสุด 400 รายการเพื่อไม่ให้มือถือหน่วง
       var row = document.createElement('label'); row.className = 'it';
       var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!i.selected;
       cb.disabled = busy || i.status === 'removed';
@@ -288,18 +310,19 @@
       var t = document.createElement('div'); t.className = 't';
       var a = document.createElement('div'); a.textContent = '@' + i.creator;
       var b = document.createElement('div'); b.textContent = i.desc || '(ไม่มีคำบรรยาย)';
-      var s = document.createElement('div'); s.className = 's' + (i.status === 'removed' ? ' ok' : (i.status === 'failed' || i.status === 'remaining') ? ' bad' : '');
-      var label = { pending: 'รอลบ', removing: 'กำลังลบ…', removed: 'ลบแล้ว', failed: 'ล้มเหลว: ' + i.error, remaining: i.error };
-      s.textContent = label[i.status] || i.status;
+      var s = document.createElement('div'); s.className = 's' + statusCls(i);
+      s.textContent = labelOf(i);
+      rowMap[i.id] = { row: row, s: s };
       t.appendChild(a); t.appendChild(b); t.appendChild(s);
       row.appendChild(cb); row.appendChild(im); row.appendChild(t); frag.appendChild(row);
     });
-    if (S.items.length > 400) {
+    if (visible.length > 400) {
       var more = document.createElement('div'); more.className = 'note';
-      more.textContent = '… และอีก ' + (S.items.length - 400) + ' รายการ (แสดงสูงสุด 400 รายการ แต่การลบทำครบทั้งหมดที่เลือก)';
+      more.textContent = '… และอีก ' + (visible.length - 400) + ' รายการ (แสดงสูงสุด 400 รายการ แต่การลบทำครบทั้งหมดที่เลือก)';
       frag.appendChild(more);
     }
     list.appendChild(frag);
+    list.scrollTop = keepTop;
   }
 
   function toggle() { $('panel').classList.toggle('open'); render(); }
