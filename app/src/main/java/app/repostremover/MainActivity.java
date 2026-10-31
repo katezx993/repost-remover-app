@@ -11,6 +11,7 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.JsResult;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -118,6 +119,18 @@ public class MainActivity extends Activity {
         cm.setAcceptThirdPartyCookies(web, true);
 
         web.setWebViewClient(new WebViewClient() {
+            /** บล็อกลิงก์ที่ไม่ใช่เว็บ (เช่น snssdk1180://, intent://) ที่ TikTok พยายามเปิดแอป TikTok -> อยู่ในหน้าเดิม */
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return blockNonWeb(request.getUrl().toString());
+            }
+
+            @Override
+            @SuppressWarnings("deprecation")
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return blockNonWeb(url);
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
@@ -195,6 +208,13 @@ public class MainActivity extends Activity {
         // เผื่อสคริปต์ยังไม่ถูกฉีด (เช่น หน้ายังโหลดไม่เสร็จ) -> ฉีดซ้ำได้ปลอดภัย แล้วค่อยสลับแผง
         web.evaluateJavascript(script, null);
         web.evaluateJavascript("window.__rrToggle && window.__rrToggle()", null);
+    }
+
+    private static boolean blockNonWeb(String url) {
+        if (url == null) return true;
+        String u = url.toLowerCase();
+        return !(u.startsWith("http://") || u.startsWith("https://")
+                || u.startsWith("about:") || u.startsWith("blob:") || u.startsWith("data:"));
     }
 
     private static boolean isTikTok(String url) {
