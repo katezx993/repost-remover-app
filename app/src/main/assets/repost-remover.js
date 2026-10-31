@@ -1,6 +1,6 @@
 /* TikTok Repost Remover - หน้าลบรีโพสต์ (ใช้ร่วมกันทั้งแอป Android และ userscript บนคอม)
    ตรรกะสแกน/ลบ/ตรวจสอบ พอร์ตมาจาก v2.1.0 ของ yiitxyz (ปรับให้ทำงานในหน้า tiktok.com โดยตรง) */
-(function () {
+(function () { try { (function () {
   'use strict';
   if (!/(^|\.)tiktok\.com$/.test(location.hostname)) return;
   if (window.__rrLoaded) return;
@@ -224,41 +224,16 @@
   host.id = 'rr-host';
   host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;right:12px;bottom:12px;';
   var root = host.attachShadow({ mode: 'open' });
-  root.innerHTML = '<style>' +
-    '*{box-sizing:border-box;font-family:system-ui,-apple-system,"Noto Sans Thai",sans-serif}' +
-    '#fab{width:52px;height:52px;border-radius:50%;border:0;background:#fe2c55;color:#fff;font-size:26px;box-shadow:0 3px 12px #0006}' +
-    '#panel{display:none;position:fixed;inset:8px;max-width:520px;margin:auto;background:#121212;color:#f1f1f1;border-radius:14px;box-shadow:0 8px 30px #000a;flex-direction:column;overflow:hidden}' +
-    '#panel.open{display:flex}' +
-    'header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#1c1c1c}' +
-    'header b{font-size:16px}header button{background:none;border:0;color:#fff;font-size:22px}' +
-    '#status{padding:10px 14px 0;font-size:14px}#err{padding:6px 14px 0;font-size:13px;color:#ff7a8e;white-space:pre-wrap}' +
-    '.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:10px 14px}' +
-    '.stats div{background:#1e1e1e;border-radius:8px;padding:6px 2px;text-align:center}' +
-    '.stats strong{display:block;font-size:17px}.stats span{font-size:10px;color:#aaa}' +
-    '.row{display:flex;flex-wrap:wrap;gap:8px;padding:0 14px 10px}' +
-    '.row button{flex:1 1 40%;padding:11px 8px;border-radius:9px;border:0;background:#2d2d2d;color:#fff;font-size:14px}' +
-    '.row button.danger{background:#fe2c55;font-weight:600}' +
-    '.row button:disabled{opacity:.4}' +
-    '#list{flex:1;overflow:auto;border-top:1px solid #2a2a2a}' +
-    '.it{display:flex;gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid #1f1f1f;font-size:13px}' +
-    '.it img{width:42px;height:56px;object-fit:cover;border-radius:5px;background:#333}' +
-    '.it .t{flex:1;min-width:0}.it .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-    '.it .s{font-size:11px;color:#9aa}.ok{color:#4cd964!important}.bad{color:#ff7a8e!important}' +
-    '.note{padding:8px 14px;font-size:11px;color:#8a8a8a}' +
-    '.note.guide{white-space:pre-line;font-size:14px;line-height:1.6;color:#d0d0d0;padding:16px 18px}' +
-    '</style>' +
-    '<button id="fab" aria-label="Repost Remover">↻</button>' +
-    '<section id="panel"><header><b>↻ ลบรีโพสต์ TikTok</b><button id="close" aria-label="ปิด">✕</button></header>' +
-    '<div id="status"></div><div id="err" hidden></div>' +
-    '<div class="stats">' +
-    '<div><strong id="c-collected">0</strong><span>ทั้งหมด</span></div><div><strong id="c-selected">0</strong><span>เลือก</span></div>' +
-    '<div><strong id="c-removed">0</strong><span>ลบแล้ว</span></div><div><strong id="c-failed">0</strong><span>ล้มเหลว</span></div>' +
-    '<div><strong id="c-remaining">0</strong><span>คงเหลือ</span></div></div>' +
-    '<div class="row">' +
-    '<button id="b-scan">สแกนรีโพสต์</button><button id="b-del" class="danger">ลบที่เลือก</button>' +
-    '<button id="b-selall">เลือกทั้งหมด</button><button id="b-selnone">ไม่เลือกเลย</button></div>' +
-    '<div id="list"></div>' +
-    '<div class="note">การลบย้อนกลับไม่ได้ · ใช้กับบัญชีตัวเองเท่านั้น · ใช้ endpoint ไม่เป็นทางการของ TikTok อาจถูกจำกัดบัญชีได้ แม้มีการหน่วงเวลาแล้ว · ไม่เกี่ยวข้องกับ TikTok</div></section>';
+  // สร้าง UI ด้วย DOM API ล้วน (ไม่ใช้ innerHTML) เผื่อหน้า TikTok บล็อกการเขียน HTML ผ่าน Trusted Types
+  function h(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]);
+    kids.forEach(function (c) { e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return e;
+  }
+  var styleEl = document.createElement('style'); styleEl.textContent = "*{box-sizing:border-box;font-family:system-ui,-apple-system,\"Noto Sans Thai\",sans-serif}#fab{width:52px;height:52px;border-radius:50%;border:0;background:#fe2c55;color:#fff;font-size:26px;box-shadow:0 3px 12px #0006}#panel{display:none;position:fixed;inset:8px;max-width:520px;margin:auto;background:#121212;color:#f1f1f1;border-radius:14px;box-shadow:0 8px 30px #000a;flex-direction:column;overflow:hidden}#panel.open{display:flex}header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#1c1c1c}header b{font-size:16px}header button{background:none;border:0;color:#fff;font-size:22px}#status{padding:10px 14px 0;font-size:14px}#err{padding:6px 14px 0;font-size:13px;color:#ff7a8e;white-space:pre-wrap}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:10px 14px}.stats div{background:#1e1e1e;border-radius:8px;padding:6px 2px;text-align:center}.stats strong{display:block;font-size:17px}.stats span{font-size:10px;color:#aaa}.row{display:flex;flex-wrap:wrap;gap:8px;padding:0 14px 10px}.row button{flex:1 1 40%;padding:11px 8px;border-radius:9px;border:0;background:#2d2d2d;color:#fff;font-size:14px}.row button.danger{background:#fe2c55;font-weight:600}.row button:disabled{opacity:.4}#list{flex:1;overflow:auto;border-top:1px solid #2a2a2a}.it{display:flex;gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid #1f1f1f;font-size:13px}.it img{width:42px;height:56px;object-fit:cover;border-radius:5px;background:#333}.it .t{flex:1;min-width:0}.it .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.it .s{font-size:11px;color:#9aa}.ok{color:#4cd964!important}.bad{color:#ff7a8e!important}.note{padding:8px 14px;font-size:11px;color:#8a8a8a}.note.guide{white-space:pre-line;font-size:14px;line-height:1.6;color:#d0d0d0;padding:16px 18px}"; root.appendChild(styleEl);
+  root.appendChild(h("button", {"id":"fab","aria-label":"Repost Remover"}, ["↻"]));
+  root.appendChild(h("section", {"id":"panel"}, [h("header", {}, [h("b", {}, ["↻ ลบรีโพสต์ TikTok"]), h("button", {"id":"close","aria-label":"ปิด"}, ["✕"])]), h("div", {"id":"status"}, []), h("div", {"id":"err","hidden":""}, []), h("div", {"class":"stats"}, [h("div", {}, [h("strong", {"id":"c-collected"}, ["0"]), h("span", {}, ["ทั้งหมด"])]), h("div", {}, [h("strong", {"id":"c-selected"}, ["0"]), h("span", {}, ["เลือก"])]), h("div", {}, [h("strong", {"id":"c-removed"}, ["0"]), h("span", {}, ["ลบแล้ว"])]), h("div", {}, [h("strong", {"id":"c-failed"}, ["0"]), h("span", {}, ["ล้มเหลว"])]), h("div", {}, [h("strong", {"id":"c-remaining"}, ["0"]), h("span", {}, ["คงเหลือ"])])]), h("div", {"class":"row"}, [h("button", {"id":"b-scan"}, ["สแกนรีโพสต์"]), h("button", {"id":"b-del","class":"danger"}, ["ลบที่เลือก"]), h("button", {"id":"b-selall"}, ["เลือกทั้งหมด"]), h("button", {"id":"b-selnone"}, ["ไม่เลือกเลย"])]), h("div", {"id":"list"}, []), h("div", {"class":"note"}, ["การลบย้อนกลับไม่ได้ · ใช้กับบัญชีตัวเองเท่านั้น · ใช้ endpoint ไม่เป็นทางการของ TikTok อาจถูกจำกัดบัญชีได้ แม้มีการหน่วงเวลาแล้ว · ไม่เกี่ยวข้องกับ TikTok"])]));
   var $ = function (id) { return root.getElementById(id); };
 
   var lastListKey = '';
@@ -349,3 +324,11 @@
     if (!n) { S.err = 'ยังไม่ได้เลือกรีโพสต์ที่ต้องลบ'; render(); return; }
     if (!confirm('ลบรีโพสต์ที่เลือก ' + n + ' รายการ?\nการลบย้อนกลับไม่ได้')) return;
     run(deleteSelected);
+  };
+  $('b-selall').onclick = function () { S.items.forEach(function (i) { if (i.status !== 'removed') i.selected = true; }); save(); render(); };
+  $('b-selnone').onclick = function () { S.items.forEach(function (i) { i.selected = false; }); save(); render(); };
+
+  load();
+  document.documentElement.appendChild(host);
+  render();
+})(); } catch (e) { window.__rrLoaded = false; window.__rrError = String((e && e.message) || e); } })();
