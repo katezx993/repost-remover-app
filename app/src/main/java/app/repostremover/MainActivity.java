@@ -11,7 +11,9 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.JsResult;
+import android.webkit.ValueCallback;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -20,6 +22,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -105,6 +108,7 @@ public class MainActivity extends Activity {
     }
 
     private void setupWebView() {
+        web.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -129,6 +133,17 @@ public class MainActivity extends Activity {
             @SuppressWarnings("deprecation")
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return blockNonWeb(url);
+            }
+
+            /** ไม่โหลดไฟล์วิดีโอของ TikTok (หนักสุด ทำให้แอปกระตุก) — เราต้องการแค่ล็อกอินกับแผงลบรีโพสต์ */
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                String u = request.getUrl().toString().toLowerCase();
+                if (u.contains("/video/tos/") || u.contains("mime_type=video") || u.contains(".mp4") || u.contains(".m3u8")) {
+                    return new WebResourceResponse("text/plain", "utf-8", 404, "Blocked",
+                            new java.util.HashMap<String, String>(), new ByteArrayInputStream(new byte[0]));
+                }
+                return super.shouldInterceptRequest(view, request);
             }
 
             @Override
@@ -207,7 +222,16 @@ public class MainActivity extends Activity {
         }
         // เผื่อสคริปต์ยังไม่ถูกฉีด (เช่น หน้ายังโหลดไม่เสร็จ) -> ฉีดซ้ำได้ปลอดภัย แล้วค่อยสลับแผง
         web.evaluateJavascript(script, null);
-        web.evaluateJavascript("window.__rrToggle && window.__rrToggle()", null);
+        // สลับแผง ถ้าเปิดไม่ได้ให้แสดงสาเหตุเป็นข้อความ (ถ่ายภาพหน้าจอส่งมาได้)
+        web.evaluateJavascript(
+                "(window.__rrToggle ? (window.__rrToggle(), 'OK') : ('ERR:' + (window.__rrError || 'สคริปต์ไม่ถูกโหลด')))",
+                new ValueCallback<String>() {
+                    @Override public void onReceiveValue(String v) {
+                        if (v != null && v.contains("ERR:")) {
+                            Toast.makeText(MainActivity.this, "เปิดแผงไม่ได้ " + v, Toast.LENGTH_LONG).show();
+                        }
+                    }
+                });
     }
 
     private static boolean blockNonWeb(String url) {
