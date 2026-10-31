@@ -18,6 +18,11 @@
       localStorage.setItem(STORE, JSON.stringify({ items: S.items, pages: S.pages, cursor: S.cursor, total: S.total, gone: S.gone }));
     } catch (e) {}
   }
+  var saveTimer = 0;
+  function saveSoon() { // เขียนลงเครื่องไม่เกินวินาทีละครั้ง ไม่ต้องเขียนทุกครั้งที่ลบ
+    if (saveTimer) return;
+    saveTimer = setTimeout(function () { saveTimer = 0; save(); }, 1000);
+  }
   function load() {
     try {
       var d = JSON.parse(localStorage.getItem(STORE) || 'null');
@@ -129,11 +134,11 @@
       var known = {}; S.items.forEach(function (i) { known[i.id] = 1; });
       p.items.forEach(function (i) { if (!known[i.id]) { i.page = S.pages; S.items.push(i); } });
       S.total = S.items.length; S.cursor = p.cursor; S.msg = 'สแกนแล้ว ' + S.items.length + ' รายการ (' + S.pages + ' หน้า)';
-      save(); render();
+      saveSoon(); render();
       if (!p.more) { S.status = 'scan_complete'; S.msg = 'สแกนเสร็จ: พบ ' + S.items.length + ' รายการ'; save(); render(); return true; }
       if (p.cursor === cur) throw new Error('TikTok ไม่ส่ง cursor หน้าถัดไป — เก็บผลสแกนบางส่วนไว้แล้ว');
       cur = p.cursor;
-      if (!(await wait(rnd(1500, 3000)))) break;
+      if (!(await wait(rnd(800, 1500)))) break;
     }
     S.status = 'scan_stopped'; S.msg = 'หยุดสแกนแล้ว เก็บรายการที่สแกนได้ไว้'; save(); render();
     return false;
@@ -157,7 +162,7 @@
       S.msg = 'ตรวจสอบกับเซิร์ฟเวอร์ หน้า ' + n + '/' + limit; render();
       if (!p.more || n >= limit || p.cursor === cur) break;
       cur = p.cursor;
-      if (!(await wait(rnd(1500, 3000)))) return false;
+      if (!(await wait(rnd(800, 1500)))) return false;
     }
     if (stopFlag) return false;
     S.items.forEach(function (i) {
@@ -172,26 +177,31 @@
     S.items.forEach(function (i) { if (i.selected && i.status !== 'removed') { i.status = 'pending'; i.error = ''; } });
     if (!counts().remaining) throw new Error('ยังไม่ได้เลือกรีโพสต์ที่ต้องลบ');
     S.status = 'deleting'; save(); render();
-    var streak = 0, group = rnd(50, 60);
-    while (!stopFlag) {
-      var it = S.items.find(function (i) { return i.selected && i.status === 'pending'; });
-      if (!it) break;
-      it.status = 'removing'; setRowLabel(it);
-      var done = counts();
-      S.msg = 'กำลังลบ ' + (done.removed + done.failed + 1) + ' / ' + (done.removed + done.failed + done.remaining);
-      render();
-      try { await removeOne(it.id); it.status = 'removed'; it.error = ''; hideRow(it.id); }
-      catch (e) {
-        if (e instanceof SafetyStop) { it.status = 'pending'; throw e; }
-        it.status = 'failed'; it.error = (e && e.message) || String(e); setRowLabel(it);
+    var target = counts().remaining, finished = 0, streak = 0, group = rnd(50, 70), pauseUntil = 0, halt = null;
+    async function worker(startDelay) {
+      if (startDelay && !(await wait(startDelay))) return;
+      while (!stopFlag && !halt) {
+        var left = pauseUntil - Date.now();
+        if (left > 0 && !(await wait(left))) return;
+        if (stopFlag || halt) return;
+        var it = S.items.find(function (i) { return i.selected && i.status === 'pending'; });
+        if (!it) return;
+        it.status = 'removing'; setRowLabel(it);
+        try { await removeOne(it.id); it.status = 'removed'; it.error = ''; hideRow(it.id); }
+        catch (e) {
+          if (e instanceof SafetyStop) { it.status = 'pending'; setRowLabel(it); halt = halt || e; return; }
+          it.status = 'failed'; it.error = (e && e.message) || String(e); setRowLabel(it);
+        }
+        finished++; S.msg = 'กำลังลบ ' + finished + ' / ' + target;
+        saveSoon(); render();
+        streak++;
+        if (streak >= group) { pauseUntil = Date.now() + rnd(1500, 3000); streak = 0; group = rnd(50, 70); }
+        else if (!(await wait(rnd(60, 140)))) return;
       }
-      save(); render();
-      streak++;
-      if (streak >= group) {
-        if (!(await wait(rnd(2000, 3500)))) break;
-        streak = 0; group = rnd(50, 60);
-      } else if (!(await wait(rnd(120, 250)))) break;
     }
+    await Promise.all([worker(0), worker(90), worker(180)]); // ลบพร้อมกัน 3 รายการ
+    S.items.forEach(function (i) { if (i.status === 'removing') i.status = 'pending'; });
+    if (halt) { save(); throw halt; }
     if (stopFlag) {
       S.items.forEach(function (i) { if (i.status === 'removing') i.status = 'pending'; });
       S.status = 'delete_stopped'; S.msg = 'หยุดการลบแล้ว (เก็บความคืบหน้าไว้)'; save(); render(); return;
@@ -231,9 +241,9 @@
     kids.forEach(function (c) { e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
     return e;
   }
-  var styleEl = document.createElement('style'); styleEl.textContent = "*{box-sizing:border-box;font-family:system-ui,-apple-system,\"Noto Sans Thai\",sans-serif}#fab{width:52px;height:52px;border-radius:50%;border:0;background:#fe2c55;color:#fff;font-size:26px;box-shadow:0 3px 12px #0006}#panel{display:none;position:fixed;inset:8px;max-width:520px;margin:auto;background:#121212;color:#f1f1f1;border-radius:14px;box-shadow:0 8px 30px #000a;flex-direction:column;overflow:hidden}#panel.open{display:flex}header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#1c1c1c}header b{font-size:16px}header button{background:none;border:0;color:#fff;font-size:22px}#status{padding:10px 14px 0;font-size:14px}#err{padding:6px 14px 0;font-size:13px;color:#ff7a8e;white-space:pre-wrap}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:10px 14px}.stats div{background:#1e1e1e;border-radius:8px;padding:6px 2px;text-align:center}.stats strong{display:block;font-size:17px}.stats span{font-size:10px;color:#aaa}.row{display:flex;flex-wrap:wrap;gap:8px;padding:0 14px 10px}.row button{flex:1 1 40%;padding:11px 8px;border-radius:9px;border:0;background:#2d2d2d;color:#fff;font-size:14px}.row button.danger{background:#fe2c55;font-weight:600}.row button:disabled{opacity:.4}#list{flex:1;overflow:auto;border-top:1px solid #2a2a2a}.it{display:flex;gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid #1f1f1f;font-size:13px}.it img{width:42px;height:56px;object-fit:cover;border-radius:5px;background:#333}.it .t{flex:1;min-width:0}.it .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.it .s{font-size:11px;color:#9aa}.ok{color:#4cd964!important}.bad{color:#ff7a8e!important}.note{padding:8px 14px;font-size:11px;color:#8a8a8a}.note.guide{white-space:pre-line;font-size:14px;line-height:1.6;color:#d0d0d0;padding:16px 18px}"; root.appendChild(styleEl);
+  var styleEl = document.createElement('style'); styleEl.textContent = "*{box-sizing:border-box;font-family:system-ui,-apple-system,\"Noto Sans Thai\",sans-serif}#fab{width:52px;height:52px;border-radius:50%;border:0;background:#fe2c55;color:#fff;font-size:26px;box-shadow:0 3px 12px #0006}#panel{display:none;position:fixed;inset:8px;max-width:520px;margin:auto;background:#121212;color:#f1f1f1;border-radius:14px;box-shadow:0 8px 30px #000a;flex-direction:column;overflow:hidden}#panel.open{display:flex}header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#1c1c1c}header b{font-size:16px}header button{background:none;border:0;color:#fff;font-size:22px}#status{padding:10px 14px 0;font-size:14px}#err{padding:6px 14px 0;font-size:13px;color:#ff7a8e;white-space:pre-wrap}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:10px 14px}.stats div{background:#1e1e1e;border-radius:8px;padding:6px 2px;text-align:center}.stats strong{display:block;font-size:17px}.stats span{font-size:10px;color:#aaa}.row{display:flex;flex-wrap:wrap;gap:8px;padding:0 14px 10px}.row button{flex:1 1 28%;padding:11px 8px;border-radius:9px;border:0;background:#2d2d2d;color:#fff;font-size:14px}.row button.danger{background:#fe2c55;font-weight:600;flex-basis:100%}.row button:disabled{opacity:.4}#list{flex:1;overflow:auto;border-top:1px solid #2a2a2a}.it{display:flex;gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid #1f1f1f;font-size:13px}.it img{width:42px;height:56px;object-fit:cover;border-radius:5px;background:#333}.it .t{flex:1;min-width:0}.it .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.it .s{font-size:11px;color:#9aa}.ok{color:#4cd964!important}.bad{color:#ff7a8e!important}.note{padding:8px 14px;font-size:11px;color:#8a8a8a}.note.guide{white-space:pre-line;font-size:14px;line-height:1.6;color:#d0d0d0;padding:16px 18px}"; root.appendChild(styleEl);
   root.appendChild(h("button", {"id":"fab","aria-label":"Repost Remover"}, ["↻"]));
-  root.appendChild(h("section", {"id":"panel"}, [h("header", {}, [h("b", {}, ["↻ ลบรีโพสต์ TikTok"]), h("button", {"id":"close","aria-label":"ปิด"}, ["✕"])]), h("div", {"id":"status"}, []), h("div", {"id":"err","hidden":""}, []), h("div", {"class":"stats"}, [h("div", {}, [h("strong", {"id":"c-collected"}, ["0"]), h("span", {}, ["ทั้งหมด"])]), h("div", {}, [h("strong", {"id":"c-selected"}, ["0"]), h("span", {}, ["เลือก"])]), h("div", {}, [h("strong", {"id":"c-removed"}, ["0"]), h("span", {}, ["ลบแล้ว"])]), h("div", {}, [h("strong", {"id":"c-failed"}, ["0"]), h("span", {}, ["ล้มเหลว"])]), h("div", {}, [h("strong", {"id":"c-remaining"}, ["0"]), h("span", {}, ["คงเหลือ"])])]), h("div", {"class":"row"}, [h("button", {"id":"b-scan"}, ["สแกนรีโพสต์"]), h("button", {"id":"b-del","class":"danger"}, ["ลบที่เลือก"]), h("button", {"id":"b-selall"}, ["เลือกทั้งหมด"]), h("button", {"id":"b-selnone"}, ["ไม่เลือกเลย"])]), h("div", {"id":"list"}, []), h("div", {"class":"note"}, ["การลบย้อนกลับไม่ได้ · ใช้กับบัญชีตัวเองเท่านั้น · ใช้ endpoint ไม่เป็นทางการของ TikTok อาจถูกจำกัดบัญชีได้ แม้มีการหน่วงเวลาแล้ว · ไม่เกี่ยวข้องกับ TikTok"])]));
+  root.appendChild(h("section", {"id":"panel"}, [h("header", {}, [h("b", {}, ["↻ ลบรีโพสต์ TikTok"]), h("button", {"id":"close","aria-label":"ปิด"}, ["✕"])]), h("div", {"id":"status"}, []), h("div", {"id":"err","hidden":""}, []), h("div", {"class":"stats"}, [h("div", {}, [h("strong", {"id":"c-collected"}, ["0"]), h("span", {}, ["ทั้งหมด"])]), h("div", {}, [h("strong", {"id":"c-selected"}, ["0"]), h("span", {}, ["เลือก"])]), h("div", {}, [h("strong", {"id":"c-removed"}, ["0"]), h("span", {}, ["ลบแล้ว"])]), h("div", {}, [h("strong", {"id":"c-failed"}, ["0"]), h("span", {}, ["ล้มเหลว"])]), h("div", {}, [h("strong", {"id":"c-remaining"}, ["0"]), h("span", {}, ["คงเหลือ"])])]), h("div", {"class":"row"}, [h("button", {"id":"b-scan","class":"danger"}, ["ลบรีโพสต์ทั้งหมด (อัตโนมัติ)"]), h("button", {"id":"b-only"}, ["สแกนอย่างเดียว"]), h("button", {"id":"b-del"}, ["ลบที่เลือก"]), h("button", {"id":"b-sel"}, ["ไม่เลือกเลย"])]), h("div", {"id":"list"}, []), h("div", {"class":"note"}, ["การลบย้อนกลับไม่ได้ · ใช้กับบัญชีตัวเองเท่านั้น · ใช้ endpoint ไม่เป็นทางการของ TikTok อาจถูกจำกัดบัญชีได้ แม้มีการหน่วงเวลาแล้ว · ไม่เกี่ยวข้องกับ TikTok"])]));
   var $ = function (id) { return root.getElementById(id); };
 
   var lastListKey = '';
@@ -245,11 +255,11 @@
     $('c-removed').textContent = gone; $('c-failed').textContent = c.failed; $('c-remaining').textContent = left;
     $('status').textContent = S.msg;
     $('err').hidden = !S.err; $('err').textContent = S.err;
-    $('b-scan').disabled = busy;
-    $('b-selall').disabled = busy;
-    $('b-selnone').disabled = busy;
-    $('b-del').textContent = busy ? 'หยุด' : 'ลบที่เลือก'; // ระหว่างสแกน/ลบ ปุ่มนี้กลายเป็นปุ่มหยุด
-    $('b-del').disabled = !busy && c.collected === 0;
+    $('b-scan').textContent = busy ? 'หยุด' : 'ลบรีโพสต์ทั้งหมด (อัตโนมัติ)'; // ระหว่างทำงาน ปุ่มหลักกลายเป็นปุ่มหยุด
+    $('b-only').disabled = busy;
+    $('b-del').disabled = busy || c.remaining === 0;
+    $('b-sel').disabled = busy || c.collected === 0;
+    $('b-sel').textContent = c.selected === c.collected ? 'ไม่เลือกเลย' : 'เลือกทั้งหมด';
     if (listTimer) return; // วาดรายการไม่เกิน ~2 ครั้ง/วินาที กันมือถือหน่วงระหว่างลบ
     listTimer = setTimeout(function () { listTimer = 0; drawList(); }, 250);
   }
@@ -280,13 +290,13 @@
     var visible = S.items.filter(function (i) { return i.status !== 'removed'; });
     if (!S.items.length) {
       var none = document.createElement('div'); none.className = 'note guide';
-      none.textContent = 'วิธีใช้\n1) กด "สแกนรีโพสต์"\n2) เลือกอันที่จะลบ (หรือ "เลือกทั้งหมด")\n3) กด "ลบที่เลือก" แล้วยืนยัน\n\n• ลบแล้วย้อนกลับไม่ได้\n• เปิดแอปค้างไว้ระหว่างลบ\n• กด "หยุด" ได้ทุกเมื่อ';
+      none.textContent = 'วิธีใช้\nกด "ลบรีโพสต์ทั้งหมด (อัตโนมัติ)" ครั้งเดียว แอปจะสแกนแล้วลบให้เองจนหมด\n\n• อยากเลือกลบบางอัน: กด "สแกนอย่างเดียว" → เลือก → "ลบที่เลือก"\n• ลบแล้วย้อนกลับไม่ได้\n• เปิดแอปค้างไว้ระหว่างลบ\n• กด "หยุด" ได้ทุกเมื่อ';
       frag.appendChild(none);
     } else if (!visible.length) {
       var empty = document.createElement('div'); empty.className = 'note'; empty.textContent = 'ลบครบทุกรายการแล้ว ✅';
       frag.appendChild(empty);
     }
-    visible.slice(0, 400).forEach(function (i) { // แสดงสูงสุด 400 รายการเพื่อไม่ให้มือถือหน่วง
+    visible.slice(0, 150).forEach(function (i) { // แสดงสูงสุด 150 รายการเพื่อไม่ให้มือถือหน่วง
       var row = document.createElement('label'); row.className = 'it';
       var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!i.selected;
       cb.disabled = busy || i.status === 'removed';
@@ -302,9 +312,9 @@
       t.appendChild(a); t.appendChild(b); t.appendChild(s);
       row.appendChild(cb); row.appendChild(im); row.appendChild(t); frag.appendChild(row);
     });
-    if (visible.length > 400) {
+    if (visible.length > 150) {
       var more = document.createElement('div'); more.className = 'note';
-      more.textContent = '… และอีก ' + (visible.length - 400) + ' รายการ (แสดงสูงสุด 400 รายการ แต่การลบทำครบทั้งหมดที่เลือก)';
+      more.textContent = '… และอีก ' + (visible.length - 150) + ' รายการ (แสดงสูงสุด 150 รายการ แต่การลบทำครบทั้งหมดที่เลือก)';
       frag.appendChild(more);
     }
     list.appendChild(frag);
@@ -314,19 +324,34 @@
   function toggle() { $('panel').classList.toggle('open'); render(); }
   window.__rrToggle = toggle;
   $('fab').onclick = toggle; $('close').onclick = toggle;
-  $('b-scan').onclick = function () {
+  $('b-scan').onclick = function () { // ปุ่มหลัก: สแกนครบแล้วลบต่ออัตโนมัติ / ระหว่างทำงานคือปุ่มหยุด
+    if (busy) { stopFlag = true; S.msg = 'กำลังหยุด…'; render(); return; }
+    if (!confirm('สแกนรีโพสต์ทั้งหมด แล้วลบให้อัตโนมัติ?\nการลบย้อนกลับไม่ได้')) return;
+    run(async function () {
+      if (await scan()) {
+        if (S.items.length) await deleteSelected();
+        else { S.status = 'completed'; S.msg = 'ไม่พบรีโพสต์ในบัญชีนี้'; save(); render(); }
+      }
+    });
+  };
+  $('b-only').onclick = function () {
+    if (busy) return;
     if (S.items.length && !confirm('สแกนใหม่และแทนที่รายการเดิม?')) return;
     run(scan);
   };
   $('b-del').onclick = function () {
-    if (busy) { stopFlag = true; S.msg = 'กำลังหยุด…'; render(); return; }
+    if (busy) return;
     var n = counts().remaining;
     if (!n) { S.err = 'ยังไม่ได้เลือกรีโพสต์ที่ต้องลบ'; render(); return; }
     if (!confirm('ลบรีโพสต์ที่เลือก ' + n + ' รายการ?\nการลบย้อนกลับไม่ได้')) return;
     run(deleteSelected);
   };
-  $('b-selall').onclick = function () { S.items.forEach(function (i) { if (i.status !== 'removed') i.selected = true; }); save(); render(); };
-  $('b-selnone').onclick = function () { S.items.forEach(function (i) { i.selected = false; }); save(); render(); };
+  $('b-sel').onclick = function () {
+    if (busy) return;
+    var c = counts(), on = c.selected !== c.collected;
+    S.items.forEach(function (i) { if (i.status !== 'removed') i.selected = on; });
+    save(); render();
+  };
 
   load();
   document.documentElement.appendChild(host);
