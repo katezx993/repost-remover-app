@@ -9,12 +9,13 @@
   var LOG = '[RepostRemover]', STORE = 'repost-remover-state-v3';
   var DANGER_RE = /captcha|verify|verification|too many|too frequent|rate.?limit|risk|restricted|unusual|slow down/i;
   var pageSize = 50, stopFlag = false, busy = false;
-  var S = { status: 'idle', msg: 'พร้อมสแกน', items: [], cursor: '0', pages: 0, err: '' };
+  var S = { status: 'idle', msg: 'พร้อมสแกน', items: [], cursor: '0', pages: 0, err: '', total: 0, gone: 0 };
+  // total = จำนวนรีโพสต์ทั้งหมดที่สแกนเจอ, gone = จำนวนที่ลบไปแล้ว (สะสม) → คงเหลือจริง = total - gone
 
   // ---------- เก็บสถานะ ----------
   function save() {
     try {
-      localStorage.setItem(STORE, JSON.stringify({ items: S.items, pages: S.pages, cursor: S.cursor }));
+      localStorage.setItem(STORE, JSON.stringify({ items: S.items, pages: S.pages, cursor: S.cursor, total: S.total, gone: S.gone }));
     } catch (e) {}
   }
   function load() {
@@ -23,6 +24,7 @@
       if (d && Array.isArray(d.items)) {
         S.items = d.items.map(function (i) { if (i.status === 'removing') i.status = 'pending'; return i; });
         S.pages = d.pages || 0; S.cursor = d.cursor || '0';
+        S.gone = d.gone || 0; S.total = d.total || (S.items.length + S.gone);
         if (S.items.length) S.msg = 'โหลดรายการที่สแกนไว้ ' + S.items.length + ' รายการ';
       }
     } catch (e) {}
@@ -117,7 +119,7 @@
   // ---------- สแกน ----------
   async function scan() {
     var sec = needSec();
-    S.items = []; S.pages = 0; S.cursor = '0'; S.status = 'scanning'; S.msg = 'กำลังสแกน…'; render();
+    S.items = []; S.total = 0; S.gone = 0; S.pages = 0; S.cursor = '0'; S.status = 'scanning'; S.msg = 'กำลังสแกน…'; render();
     var seen = {}, cur = '0';
     while (!stopFlag) {
       if (seen[cur]) throw new Error('TikTok ส่ง cursor ซ้ำ — เก็บผลสแกนบางส่วนไว้แล้ว');
@@ -126,12 +128,12 @@
       S.pages++;
       var known = {}; S.items.forEach(function (i) { known[i.id] = 1; });
       p.items.forEach(function (i) { if (!known[i.id]) { i.page = S.pages; S.items.push(i); } });
-      S.cursor = p.cursor; S.msg = 'สแกนแล้ว ' + S.items.length + ' รายการ (' + S.pages + ' หน้า)';
+      S.total = S.items.length; S.cursor = p.cursor; S.msg = 'สแกนแล้ว ' + S.items.length + ' รายการ (' + S.pages + ' หน้า)';
       save(); render();
       if (!p.more) { S.status = 'scan_complete'; S.msg = 'สแกนเสร็จ: พบ ' + S.items.length + ' รายการ'; save(); render(); return true; }
       if (p.cursor === cur) throw new Error('TikTok ไม่ส่ง cursor หน้าถัดไป — เก็บผลสแกนบางส่วนไว้แล้ว');
       cur = p.cursor;
-      if (!(await wait(rnd(4000, 8000)))) break;
+      if (!(await wait(rnd(1500, 3000)))) break;
     }
     S.status = 'scan_stopped'; S.msg = 'หยุดสแกนแล้ว เก็บรายการที่สแกนได้ไว้'; save(); render();
     return false;
@@ -155,7 +157,7 @@
       S.msg = 'ตรวจสอบกับเซิร์ฟเวอร์ หน้า ' + n + '/' + limit; render();
       if (!p.more || n >= limit || p.cursor === cur) break;
       cur = p.cursor;
-      if (!(await wait(rnd(4000, 8000)))) return false;
+      if (!(await wait(rnd(1500, 3000)))) return false;
     }
     if (stopFlag) return false;
     S.items.forEach(function (i) {
@@ -170,7 +172,7 @@
     S.items.forEach(function (i) { if (i.selected && i.status !== 'removed') { i.status = 'pending'; i.error = ''; } });
     if (!counts().remaining) throw new Error('ยังไม่ได้เลือกรีโพสต์ที่ต้องลบ');
     S.status = 'deleting'; save(); render();
-    var streak = 0, group = rnd(35, 45);
+    var streak = 0, group = rnd(50, 60);
     while (!stopFlag) {
       var it = S.items.find(function (i) { return i.selected && i.status === 'pending'; });
       if (!it) break;
@@ -186,9 +188,9 @@
       save(); render();
       streak++;
       if (streak >= group) {
-        if (!(await wait(rnd(4000, 7000)))) break;
-        streak = 0; group = rnd(35, 45);
-      } else if (!(await wait(rnd(300, 600)))) break;
+        if (!(await wait(rnd(2000, 3500)))) break;
+        streak = 0; group = rnd(50, 60);
+      } else if (!(await wait(rnd(120, 250)))) break;
     }
     if (stopFlag) {
       S.items.forEach(function (i) { if (i.status === 'removing') i.status = 'pending'; });
@@ -197,10 +199,11 @@
     var ok = await verify(sec);
     if (!ok) { S.status = 'delete_stopped'; S.msg = 'หยุดระหว่างตรวจสอบ'; save(); render(); return; }
     var removedN = counts().removed;
+    S.gone += removedN; // เก็บยอดที่ลบไปแล้วสะสมไว้ ก่อนรีเซ็ตรายการ
     S.items = S.items.filter(function (i) { return i.status !== 'removed'; }); // รีเซ็ตรายการ: เหลือเฉพาะที่ลบไม่สำเร็จ
     S.status = 'completed';
     S.msg = S.items.length === 0
-      ? 'ลบเสร็จและตรวจสอบแล้ว ✅ ลบไป ' + removedN + ' รายการ — รีเซ็ตรายการแล้ว'
+      ? 'ลบเสร็จและตรวจสอบแล้ว ✅ ลบไป ' + removedN + ' รายการ · เหลือรีโพสต์ ' + Math.max(0, S.total - S.gone) + ' รายการ'
       : 'ลบแล้ว ' + removedN + ' รายการ · เหลือ ' + S.items.length + ' รายการที่ยังลบไม่สำเร็จ (กด "ลบที่เลือก" เพื่อลองใหม่)';
     save(); render();
   }
@@ -242,12 +245,13 @@
     '.it .t{flex:1;min-width:0}.it .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
     '.it .s{font-size:11px;color:#9aa}.ok{color:#4cd964!important}.bad{color:#ff7a8e!important}' +
     '.note{padding:8px 14px;font-size:11px;color:#8a8a8a}' +
+    '.note.guide{white-space:pre-line;font-size:14px;line-height:1.6;color:#d0d0d0;padding:16px 18px}' +
     '</style>' +
     '<button id="fab" aria-label="Repost Remover">↻</button>' +
     '<section id="panel"><header><b>↻ ลบรีโพสต์ TikTok</b><button id="close" aria-label="ปิด">✕</button></header>' +
     '<div id="status"></div><div id="err" hidden></div>' +
     '<div class="stats">' +
-    '<div><strong id="c-collected">0</strong><span>สแกนได้</span></div><div><strong id="c-selected">0</strong><span>เลือก</span></div>' +
+    '<div><strong id="c-collected">0</strong><span>ทั้งหมด</span></div><div><strong id="c-selected">0</strong><span>เลือก</span></div>' +
     '<div><strong id="c-removed">0</strong><span>ลบแล้ว</span></div><div><strong id="c-failed">0</strong><span>ล้มเหลว</span></div>' +
     '<div><strong id="c-remaining">0</strong><span>คงเหลือ</span></div></div>' +
     '<div class="row">' +
@@ -260,7 +264,10 @@
   var lastListKey = '';
   function render() {
     var c = counts();
-    ['collected', 'selected', 'removed', 'failed', 'remaining'].forEach(function (k) { $('c-' + k).textContent = c[k]; });
+    var gone = S.gone + c.removed;                 // ลบไปแล้ว (นับสดทุกครั้งที่ลบสำเร็จ)
+    var left = Math.max(0, S.total - gone);        // คงเหลือจริง = ทั้งหมด - ลบแล้ว
+    $('c-collected').textContent = S.total; $('c-selected').textContent = c.selected;
+    $('c-removed').textContent = gone; $('c-failed').textContent = c.failed; $('c-remaining').textContent = left;
     $('status').textContent = S.msg;
     $('err').hidden = !S.err; $('err').textContent = S.err;
     $('b-scan').disabled = busy;
@@ -297,7 +304,8 @@
     rowMap = {};
     var visible = S.items.filter(function (i) { return i.status !== 'removed'; });
     if (!S.items.length) {
-      var none = document.createElement('div'); none.className = 'note'; none.textContent = 'ยังไม่มีรายการ — กด "สแกนรีโพสต์"';
+      var none = document.createElement('div'); none.className = 'note guide';
+      none.textContent = 'วิธีใช้\n1) กด "สแกนรีโพสต์"\n2) เลือกอันที่จะลบ (หรือ "เลือกทั้งหมด")\n3) กด "ลบที่เลือก" แล้วยืนยัน\n\n• ลบแล้วย้อนกลับไม่ได้\n• เปิดแอปค้างไว้ระหว่างลบ\n• กด "หยุด" ได้ทุกเมื่อ';
       frag.appendChild(none);
     } else if (!visible.length) {
       var empty = document.createElement('div'); empty.className = 'note'; empty.textContent = 'ลบครบทุกรายการแล้ว ✅';
@@ -341,11 +349,3 @@
     if (!n) { S.err = 'ยังไม่ได้เลือกรีโพสต์ที่ต้องลบ'; render(); return; }
     if (!confirm('ลบรีโพสต์ที่เลือก ' + n + ' รายการ?\nการลบย้อนกลับไม่ได้')) return;
     run(deleteSelected);
-  };
-  $('b-selall').onclick = function () { S.items.forEach(function (i) { if (i.status !== 'removed') i.selected = true; }); save(); render(); };
-  $('b-selnone').onclick = function () { S.items.forEach(function (i) { i.selected = false; }); save(); render(); };
-
-  load();
-  document.documentElement.appendChild(host);
-  render();
-})();
